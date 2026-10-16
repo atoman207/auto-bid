@@ -111,6 +111,36 @@ export function parseStoredProfile(record: LogRecord): ProfileInput {
   return result.data;
 }
 
+/** Creates the person's résumé sheet from generated content and marks the submission done. */
+async function storeGenerated(id: string, profile: ProfileInput, ai: GeneratedContent, today: Date, origin: string): Promise<number> {
+  const sheetId = await createResumeSheet(`${profile.fullName} ${id}`, sheetValues(profile, ai, today));
+  await updateSubmission(id, {
+    status: STATUS.done,
+    sheetId: String(sheetId),
+    sheetUrl: sheetUrl(sheetId),
+    listenUrl: listenUrl(origin, sheetId),
+    error: "",
+  });
+  return sheetId;
+}
+
+/** Demo mode: the content was already generated (and shown); keep a copy in the spreadsheet. */
+export async function saveGeneratedSubmission(
+  id: string,
+  profile: ProfileInput,
+  ai: GeneratedContent,
+  today: Date,
+  origin: string,
+): Promise<void> {
+  try {
+    await recordSubmission(profile, id, today);
+    await storeGenerated(id, profile, ai, today, origin);
+  } catch (e) {
+    console.error(`[saveGeneratedSubmission] ${id}:`, e);
+    await updateSubmission(id, { status: STATUS.error, error: errorMessage(e).slice(0, 1000) }).catch(() => undefined);
+  }
+}
+
 /**
  * Generates the texts with AI and creates the person's résumé sheet.
  * Errors are recorded in the log so the admin can retry from the dashboard.
@@ -124,16 +154,7 @@ export async function processSubmission(id: string, origin: string): Promise<{ o
 
     const today = new Date();
     const ai = await generateContent(profile, today, residenceDescription(profile));
-    const title = `${profile.fullName} ${id}`;
-    const sheetId = await createResumeSheet(title, sheetValues(profile, ai, today));
-
-    await updateSubmission(id, {
-      status: STATUS.done,
-      sheetId: String(sheetId),
-      sheetUrl: sheetUrl(sheetId),
-      listenUrl: listenUrl(origin, sheetId),
-      error: "",
-    });
+    const sheetId = await storeGenerated(id, profile, ai, today, origin);
     return { ok: true, sheetId };
   } catch (e) {
     const error = errorMessage(e);

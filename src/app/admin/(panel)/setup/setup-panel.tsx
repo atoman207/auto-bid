@@ -19,6 +19,7 @@ type Config = {
   blobAccess: string;
   baseUrl: string;
   allowDuplicates: boolean;
+  demo: boolean;
 };
 type Status = { config: Config; spreadsheet: { ok: boolean; title?: string; sheets?: string[]; error?: string } };
 
@@ -144,6 +145,11 @@ export function SetupPanel() {
             {c.blob
               ? `接続済み（${c.blobAccess}）`
               : "未設定です。学習ページでは再生時に毎回音声を生成します（動作はしますが、費用と待ち時間が増えます）。Vercel の Storage → Blob を作成して接続してください。"}
+          </Row>
+          <Row ok warn={c.demo} title="デモモード（DEMO_MODE）">
+            {c.demo
+              ? "オン：送信するとその場でAIが作成し、結果をモーダルで表示します（音声・CSVつき）。Google スプレッドシートが設定済みなら、結果はシートにも保存されます。"
+              : "オフ：通常の運用です。送信内容はスプレッドシートに保存され、利用者には完了メッセージだけが表示されます。"}
           </Row>
           <Row ok={!c.allowDuplicates} warn title="1人1回の制限">
             {c.allowDuplicates ? "ALLOW_DUPLICATE_SUBMISSIONS=true のため、同じ連絡先から何度でも送信できます（テスト用）。" : "有効（同じ連絡先・メールからは1回のみ）"}

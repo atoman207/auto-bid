@@ -90,23 +90,32 @@ function remember(pathname: string, data: Buffer) {
   while (memory.size > MEMORY_LIMIT) memory.delete(memory.keys().next().value as string);
 }
 
-/** Returns the audio for a text, generating and storing it when needed. */
-export async function ensureAudio(sheetId: number, key: string, text: string): Promise<{ data: Buffer; created: boolean }> {
-  const pathname = audioPath(sheetId, key, audioHash(text));
+/** Returns the audio stored at `pathname`, generating (and storing) it when missing. */
+async function ensureAudioAt(pathname: string, text: string): Promise<{ data: Buffer; created: boolean }> {
   const cached = memory.get(pathname);
   if (cached) return { data: cached, created: false };
-  const stored = await readStoredAudio(pathname);
+  const stored = await readStoredAudio(pathname).catch(() => null);
   if (stored) {
     remember(pathname, stored);
     return { data: stored, created: false };
   }
   const data = await synthesize(text);
   remember(pathname, data);
-  if (blobEnabled()) {
-    await storeAudio(pathname, data);
-    await deleteOldVersions(sheetId, key, pathname).catch(() => undefined);
-  }
+  if (blobEnabled()) await storeAudio(pathname, data).catch((e) => console.error("[tts] could not store audio:", e));
   return { data, created: true };
+}
+
+/** Audio for one learner item; older versions of the same item are removed. */
+export async function ensureAudio(sheetId: number, key: string, text: string): Promise<{ data: Buffer; created: boolean }> {
+  const pathname = audioPath(sheetId, key, audioHash(text));
+  const result = await ensureAudioAt(pathname, text);
+  if (result.created && blobEnabled()) await deleteOldVersions(sheetId, key, pathname).catch(() => undefined);
+  return result;
+}
+
+/** Audio for a demo result (no spreadsheet): keyed by the text itself. */
+export function ensureDemoAudio(text: string): Promise<{ data: Buffer; created: boolean }> {
+  return ensureAudioAt(`audio/demo/${audioHash(text)}.mp3`, text);
 }
 
 export function rememberedAudio(pathname: string): Buffer | null {

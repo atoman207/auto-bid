@@ -32,16 +32,53 @@ function statusOf(e: unknown): number {
   return 0;
 }
 
+const KEY_FORMAT = /DECODER|PEM|no start line|asn1|private key|bad base64/i;
+const AUTH_FAILED = /invalid_grant|invalid_client|unauthorized_client|Invalid JWT/i;
+const API_DISABLED = /has not been used in project|it is disabled|SERVICE_DISABLED|accessNotConfigured/i;
+
 export function googleErrorMessage(e: unknown): string {
   const status = statusOf(e);
   const err = e as { message?: string; response?: { data?: { error?: { message?: string } } } };
   const detail = err?.response?.data?.error?.message || err?.message || String(e);
+  if (KEY_FORMAT.test(detail)) {
+    return `GOOGLE_PRIVATE_KEY の形式が正しくありません。サービスアカウントの JSON の private_key（-----BEGIN PRIVATE KEY----- から -----END PRIVATE KEY----- まで）をそのまま貼り付けるか、GOOGLE_SERVICE_ACCOUNT_JSON に JSON 全体を貼り付けてください。（${detail}）`;
+  }
+  if (AUTH_FAILED.test(detail)) {
+    return `サービスアカウントの認証に失敗しました。メールアドレスと秘密鍵が同じ JSON のものか確認してください。（${detail}）`;
+  }
+  if (API_DISABLED.test(detail)) {
+    return `Google Sheets API が有効になっていません。Google Cloud Console →「API とサービス」→「ライブラリ」で Google Sheets API を有効にしてください。（${detail}）`;
+  }
   if (status === 403) {
     return `Google スプレッドシートへのアクセスが拒否されました。スプレッドシートをサービスアカウントに「編集者」として共有してください。（${detail}）`;
   }
   if (status === 404) return `スプレッドシートが見つかりません。GOOGLE_SPREADSHEET_ID を確認してください。（${detail}）`;
   if (status === 429) return `Google API の利用上限に達しました。しばらく待ってから再度お試しください。（${detail}）`;
   return detail;
+}
+
+export type StorageErrorCode =
+  | "SHEETS_NOT_CONFIGURED"
+  | "GOOGLE_KEY_INVALID"
+  | "GOOGLE_AUTH_FAILED"
+  | "SHEETS_API_DISABLED"
+  | "SHEET_PERMISSION"
+  | "SPREADSHEET_NOT_FOUND"
+  | "SHEETS_BUSY"
+  | "SERVER_ERROR";
+
+/** A short, non-secret code for a failure while saving to the spreadsheet. */
+export function storageErrorCode(e: unknown): StorageErrorCode {
+  if (e instanceof ConfigError) return "SHEETS_NOT_CONFIGURED";
+  const msg = e instanceof Error ? e.message : String(e);
+  const status = e instanceof GoogleApiError ? e.status : statusOf(e);
+  if (KEY_FORMAT.test(msg)) return "GOOGLE_KEY_INVALID";
+  if (AUTH_FAILED.test(msg)) return "GOOGLE_AUTH_FAILED";
+  if (API_DISABLED.test(msg)) return "SHEETS_API_DISABLED";
+  if (status === 403) return "SHEET_PERMISSION";
+  if (status === 404) return "SPREADSHEET_NOT_FOUND";
+  if (status === 429 || status >= 500) return "SHEETS_BUSY";
+  return "SERVER_ERROR";
 }
 
 /** Runs a Sheets call, retrying on rate limits and transient server errors. */

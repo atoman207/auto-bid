@@ -9,6 +9,55 @@ export function hasJapanese(text: string): boolean {
   return JAPANESE.test(text);
 }
 
+const KANA_RUN = /[\p{Script=Hiragana}\p{Script=Katakana}ー]{2,}/gu;
+const KATAKANA_WORD = /[\p{Script=Katakana}ー]{2,}/gu;
+
+function katakanaToHiragana(s: string): string {
+  return s.replace(/[ァ-ヶ]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+}
+
+/**
+ * Models often write katakana words of the Japanese in hiragana ("バドミントン" →
+ * "ばどみんとん"). Puts them back in katakana, in order, so the reading matches the text.
+ */
+export function restoreKatakana(ja: string, reading: string): string {
+  let out = reading;
+  let from = 0;
+  for (const [word] of ja.matchAll(KATAKANA_WORD)) {
+    const kept = out.indexOf(word, from);
+    if (kept >= 0) {
+      from = kept + word.length;
+      continue;
+    }
+    const hira = katakanaToHiragana(word);
+    const at = out.indexOf(hira, from);
+    if (at >= 0) {
+      out = out.slice(0, at) + word + out.slice(at + hira.length);
+      from = at + word.length;
+    }
+  }
+  return out;
+}
+
+/**
+ * Checks that a hiragana reading really is a reading of `ja`: every kana run of the
+ * Japanese (okurigana, particles, katakana words) must appear, in order, in the reading.
+ * Catches dropped words ("いたします" → "します") and katakana turned into hiragana.
+ */
+export function readingMatches(ja: string, hiragana: string): boolean {
+  if (hasKanji(hiragana)) return false;
+  // a long reading must be split into words (分かち書き)
+  if (hiragana.length > 30 && !/\s/.test(hiragana)) return false;
+  const reading = hiragana.replace(/\s+/g, "");
+  let from = 0;
+  for (const [run] of ja.matchAll(KANA_RUN)) {
+    const at = reading.indexOf(run, from);
+    if (at < 0) return false;
+    from = at + run.length;
+  }
+  return true;
+}
+
 function isWide(ch: string): boolean {
   const cp = ch.codePointAt(0) ?? 0;
   return (

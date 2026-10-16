@@ -6,7 +6,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Container } from "@/components/container";
 import { BiText, CheckCards, Field, RadioCards, SelectField, TextArea, TextField } from "@/components/form-controls";
 import { useLang } from "@/components/lang";
+import { ResultModal, type ModalState } from "@/components/result-modal";
 import { T } from "@/components/t";
+import type { DemoResult } from "@/lib/demo-types";
 import { bi, pickBi, type Bi, type Lang } from "@/lib/i18n";
 import {
   CONSIDERATIONS, CONTACT_METHODS, DESIRED_FIELDS, DURATIONS, EDUCATION_LEVELS, EDUCATION_STATUS, EMPLOYMENT_TYPES,
@@ -22,6 +24,9 @@ import {
 
 const DRAFT_KEY = "rirekisho-draft-v1";
 export const DONE_KEY = "rirekisho-submitted-v1";
+const RESULT_KEY = "rirekisho-demo-result-v1";
+
+type SiteStatus = { demo: boolean; ready: boolean };
 
 const STEPS: Bi[] = [
   { ja: "基本情報", id: "Data diri" },
@@ -91,14 +96,18 @@ export function ApplyForm() {
   const [furthest, setFurthest] = useState(0);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
-  const [serverError, setServerError] = useState("");
+  const [serverError, setServerError] = useState<{ message: string; code?: string } | null>(null);
   const [done, setDone] = useState<{ id: string } | null>(null);
+  const [site, setSite] = useState<SiteStatus | null>(null);
+  const [modal, setModal] = useState<ModalState | null>(null);
+  const [lastResult, setLastResult] = useState<DemoResult | null>(null);
   const honeypot = useRef<HTMLInputElement>(null);
   const top = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const draft = readStorage<Draft>(DRAFT_KEY);
     const finished = readStorage<{ id: string }>(DONE_KEY);
+    const previous = readStorage<DemoResult>(RESULT_KEY);
     // Restoring browser-only state after hydration.
     /* eslint-disable react-hooks/set-state-in-effect */
     if (draft?.form) {
@@ -108,8 +117,20 @@ export function ApplyForm() {
       setFurthest(Math.max(s, Math.min(draft.furthest ?? 0, STEPS.length - 1)));
     }
     if (finished?.id) setDone(finished);
+    if (previous?.qa?.length) setLastResult(previous);
     setMounted(true);
     /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/status", { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<SiteStatus>) : null))
+      .then((s) => active && s && setSite(s))
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -128,7 +149,7 @@ export function ApplyForm() {
   const goTo = (n: number) => {
     setStep(n);
     setFurthest((f) => Math.max(f, n));
-    setServerError("");
+    setServerError(null);
     requestAnimationFrame(() => top.current?.scrollIntoView({ block: "start" }));
   };
 
@@ -160,8 +181,14 @@ export function ApplyForm() {
         return focusFirstError(errs);
       }
     }
+    const demo = site?.demo === true;
     setSubmitting(true);
-    setServerError("");
+    setServerError(null);
+    if (demo) setModal({ status: "loading" });
+    const fail = (message: string, code?: string) => {
+      if (demo) setModal({ status: "error", message, code });
+      else setServerError({ message, code });
+    };
     try {
       const res = await fetch("/api/submit", {
         method: "POST",
@@ -169,22 +196,31 @@ export function ApplyForm() {
         body: JSON.stringify({ ...form, website: honeypot.current?.value ?? "" }),
       });
       const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean; id?: string; error?: string; errors?: FieldErrors; step?: number; duplicate?: boolean;
+        ok?: boolean; id?: string; error?: string; code?: string; errors?: FieldErrors; step?: number;
+        duplicate?: boolean; demo?: boolean; result?: DemoResult;
       };
-      if (res.ok && data.ok && data.id) {
+      if (res.ok && data.ok && data.demo && data.result) {
+        // Demo: show the generated texts right away; the form stays filled in for another try.
+        setModal({ status: "done", result: data.result });
+        setLastResult(data.result);
+        writeStorage(RESULT_KEY, data.result);
+      } else if (res.ok && data.ok && data.id) {
+        setModal(null);
         writeStorage(DONE_KEY, { id: data.id, at: Date.now() });
         writeStorage(DRAFT_KEY, null);
         router.replace("/thanks");
         return;
-      }
-      if (res.status === 400 && data.errors && typeof data.step === "number") {
+      } else if (res.status === 400 && data.errors && typeof data.step === "number") {
+        setModal(null);
         setErrors(data.errors);
         goTo(data.step);
         focusFirstError(data.errors);
+        setServerError({ message: data.error ?? MSG_FAILED });
+      } else {
+        fail(data.error ?? MSG_FAILED, data.code ?? (res.status === 504 ? "TIMEOUT" : `HTTP_${res.status}`));
       }
-      setServerError(data.error ?? MSG_FAILED);
     } catch {
-      setServerError(MSG_OFFLINE);
+      fail(MSG_OFFLINE, "NETWORK");
     }
     setSubmitting(false);
   };
@@ -237,6 +273,24 @@ export function ApplyForm() {
             <BiText {...STEPS[step]} />
           </h1>
 
+          {site?.demo && site.ready && (
+            <p className="mt-4 rounded-xl border border-accent/20 bg-accent-soft px-4 py-3 text-[14px] leading-relaxed">
+              <span className="mr-2 rounded-full bg-accent px-2 py-0.5 text-[11px] font-bold text-white">DEMO</span>
+              <T
+                ja="デモ版です。最後に「AIで作成する」を押すと、その場で自己紹介文と面接の10問の回答例を作成して表示します（音声再生・CSVダウンロードつき）。"
+                id="Ini versi demo. Tekan「Buat dengan AI」di akhir, dan teks perkenalan diri serta 10 contoh jawaban wawancara langsung dibuat dan ditampilkan (bisa putar audio & unduh CSV)."
+              />
+            </p>
+          )}
+          {site && !site.ready && (
+            <p role="status" className="mt-4 rounded-xl border border-warn/30 bg-warn-soft px-4 py-3 text-[14px] leading-relaxed text-warn">
+              <T
+                ja="現在、受付の準備中です（システム設定が完了していません）。入力した内容はこの端末に保存されます。"
+                id="Pendaftaran sedang disiapkan (pengaturan sistem belum selesai). Isian Anda disimpan di perangkat ini."
+              />
+            </p>
+          )}
+
           <div className="mt-6 space-y-8 lg:mt-8">
             {step === 0 && <StepBasic {...stepProps} />}
             {step === 1 && <StepContact {...stepProps} />}
@@ -263,9 +317,23 @@ export function ApplyForm() {
             </p>
           )}
           {serverError && (
-            <p role="alert" className="mt-4 rounded-xl bg-danger-soft px-4 py-3 text-[14px] font-medium text-danger">
-              {pickBi(serverError, lang)}
-            </p>
+            <div role="alert" className="mt-4 rounded-xl bg-danger-soft px-4 py-3 text-[14px] font-medium text-danger">
+              <p>{pickBi(serverError.message, lang)}</p>
+              {serverError.code && (
+                <p className="mt-1 font-mono text-[12px] font-normal opacity-80">
+                  <T ja="エラーコード" id="Kode error" />: {serverError.code}
+                </p>
+              )}
+            </div>
+          )}
+          {isLast && lastResult && !submitting && (
+            <button
+              type="button"
+              onClick={() => setModal({ status: "done", result: lastResult })}
+              className="mt-4 w-full rounded-xl border border-line-strong bg-card px-4 py-3 text-[14px] font-semibold hover:bg-bg"
+            >
+              <T ja="前回の作成結果を見る" id="Lihat hasil sebelumnya" />
+            </button>
           )}
 
           <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-card/95 backdrop-blur lg:static lg:z-auto lg:mt-10 lg:border-0 lg:bg-transparent lg:backdrop-blur-none">
@@ -289,9 +357,9 @@ export function ApplyForm() {
                 className="min-h-[52px] flex-[2] rounded-xl bg-accent text-[16px] font-bold text-accent-ink shadow-sm hover:bg-accent-hover active:bg-accent-hover disabled:opacity-60 lg:flex-none lg:px-14"
               >
                 {submitting ? (
-                  <T ja="送信中…" id="Mengirim…" />
+                  site?.demo ? <T ja="AIが作成中…" id="AI sedang membuat…" /> : <T ja="送信中…" id="Mengirim…" />
                 ) : isLast ? (
-                  <T ja="この内容で送信する" id="Kirim data ini" />
+                  site?.demo ? <T ja="AIで作成する" id="Buat dengan AI" /> : <T ja="この内容で送信する" id="Kirim data ini" />
                 ) : (
                   <T ja="次へ" id="Lanjut" />
                 )}
@@ -300,6 +368,17 @@ export function ApplyForm() {
           </div>
         </div>
       </Container>
+
+      {modal && (
+        <ResultModal
+          state={modal}
+          onClose={() => setModal(null)}
+          onRetry={() => {
+            setModal(null);
+            void submit();
+          }}
+        />
+      )}
     </div>
   );
 }

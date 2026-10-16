@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { SiteFooter } from "@/components/brand";
 import { Container } from "@/components/container";
+import { DemoBanner } from "@/components/demo-banner";
 import { T } from "@/components/t";
 
 const icon = (path: ReactNode) => (
@@ -167,6 +168,7 @@ export default function HomePage() {
         <section className="border-b border-line bg-gradient-to-b from-card to-bg">
           <Container className="grid items-center gap-12 py-12 sm:py-16 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:py-20">
             <div>
+              <DemoBanner />
               <p className="inline-flex rounded-full bg-accent-soft px-3 py-1 text-[13px] font-semibold text-accent">
                 <T ja="日本で働きたい方へ" id="Untuk Anda yang ingin bekerja di Jepang" />
               </p>

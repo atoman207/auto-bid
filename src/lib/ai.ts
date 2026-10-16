@@ -1,16 +1,48 @@
 import "server-only";
 import OpenAI from "openai";
-import { env } from "./env";
+import { ConfigError, env } from "./env";
 import { QUESTIONS, type Tri } from "./questions";
 import type { ProfileInput } from "./schema";
 import { profileSummary } from "./resume";
-import { hasJapanese, hasKanji, mapLimit } from "./text";
+import { hasJapanese, mapLimit, readingMatches, restoreKatakana } from "./text";
 
 let client: OpenAI | null = null;
 
 export function openai(): OpenAI {
-  if (!client) client = new OpenAI({ apiKey: env.openaiApiKey(), timeout: 40_000, maxRetries: 1 });
+  // Short timeouts keep a whole generation inside the 60 s function limit.
+  if (!client) client = new OpenAI({ apiKey: env.openaiApiKey(), timeout: 28_000, maxRetries: 1 });
   return client;
+}
+
+export type AiErrorCode =
+  | "AI_NOT_CONFIGURED"
+  | "AI_KEY_INVALID"
+  | "AI_NO_CREDIT"
+  | "AI_MODEL_NOT_FOUND"
+  | "AI_PERMISSION"
+  | "AI_BUSY"
+  | "AI_TIMEOUT"
+  | "AI_FAILED";
+
+/** A short, non-secret code describing why an OpenAI call failed. */
+export function aiErrorCode(e: unknown): AiErrorCode {
+  if (e instanceof ConfigError) return "AI_NOT_CONFIGURED";
+  if (e instanceof OpenAI.APIConnectionTimeoutError) return "AI_TIMEOUT";
+  if (e instanceof OpenAI.APIError) {
+    const code = String(e.code ?? "");
+    if (e.status === 401) return "AI_KEY_INVALID";
+    if (e.status === 429 && /insufficient_quota|billing/i.test(code + e.message)) return "AI_NO_CREDIT";
+    if (e.status === 429) return "AI_BUSY";
+    if (e.status === 404 || code === "model_not_found") return "AI_MODEL_NOT_FOUND";
+    if (e.status === 403) return "AI_PERMISSION";
+    if ((e.status ?? 0) >= 500) return "AI_BUSY";
+  }
+  return "AI_FAILED";
+}
+
+/** Codes that need the operator to fix the configuration (retrying will not help). */
+export function isAiSetupProblem(code: AiErrorCode): boolean {
+  return ["AI_NOT_CONFIGURED", "AI_KEY_INVALID", "AI_NO_CREDIT", "AI_MODEL_NOT_FOUND", "AI_PERMISSION"].includes(code);
 }
 
 // =====================================================================
@@ -28,9 +60,11 @@ const READING_RULES = `# 3つの版（ja / hiragana / id）のルール
 - 「です・ます」調で統一する。
 
 ## hiragana（ひらがな版）
-- ja と全く同じ文・同じ語順で、読み方をひらがなで書く。言葉の追加・省略・言い換えは禁止。
-- 漢字は1文字も使わない。すべてひらがなにする。
-- カタカナの言葉（外来語・国名・地名・人名）はカタカナのまま書く。
+- ja と全く同じ文・同じ語順で、漢字の部分だけを読み方のひらがなに置き換える。言葉の追加・省略・言い換えは禁止（例：「お願いいたします」を「おねがいします」にしない）。
+- 漢字は1文字も使わない。
+- ja にあるひらがなとカタカナは、そのまま同じ文字で残す。カタカナの言葉（外来語・国名・地名・人名）をひらがなに変えない。
+  例：ja「シティ・ヌルハリザと申します。インドネシアから来ました。チームで働きたいです。」
+  → hiragana「シティ・ヌルハリザと もうします。インドネシアから きました。チームで はたらきたいです。」
 - 数字やアルファベットは読み方で書く（例：「2024年」→「にせんにじゅうよねん」、「3年間」→「さんねんかん」、「N4」→「エヌよん」）。
 - 文節ごとに半角スペースで区切る（分かち書き）。例：「わたしは インドネシアの バンドンから きました。」
 - 助詞の「は」「へ」「を」は書いたとおりにする（「わ」「え」「お」にしない）。
@@ -157,8 +191,13 @@ async function callJson<T>(name: string, system: string, user: string, schema: o
   }
 }
 
+function cleanReading(ja: string, hiragana: string): string {
+  return restoreKatakana(ja, hiragana.trim().replace(/ {2,}/g, " "));
+}
+
 function cleanTri(t: Tri): Tri {
-  return { ja: t.ja.trim(), hiragana: t.hiragana.trim().replace(/ {2,}/g, " "), id: t.id.trim() };
+  const ja = t.ja.trim();
+  return { ja, hiragana: cleanReading(ja, t.hiragana), id: t.id.trim() };
 }
 
 // =====================================================================
@@ -259,7 +298,13 @@ ${list}`;
   return result;
 }
 
-export async function generateContent(p: ProfileInput, today: Date, residence: string): Promise<GeneratedContent> {
+export async function generateContent(
+  p: ProfileInput,
+  today: Date,
+  residence: string,
+  /** Epoch ms; optional clean-up steps are skipped when time runs short. */
+  deadline = Number.POSITIVE_INFINITY,
+): Promise<GeneratedContent> {
   const level = levelPlan(p.jlpt);
   // Name first, so every text uses the same katakana spelling.
   const basics = await generateBasics(p, residence);
@@ -278,13 +323,13 @@ export async function generateContent(p: ProfileInput, today: Date, residence: s
   ]);
   const answers: Record<number, Tri> = Object.assign({}, ...answerParts);
 
-  // Quality gate: hiragana must not contain kanji; Indonesian must not contain Japanese.
+  // Quality gate: the hiragana must be an exact reading of the Japanese; Indonesian must not contain Japanese.
   const items: Record<string, Tri> = { intro: intro.self_intro };
   for (const [no, t] of Object.entries(answers)) items[`a${no}`] = t;
   const broken = Object.entries(items)
-    .filter(([, t]) => hasKanji(t.hiragana) || hasJapanese(t.id))
+    .filter(([, t]) => !readingMatches(t.ja, t.hiragana) || hasJapanese(t.id))
     .map(([key, t]) => ({ key, ja: t.ja }));
-  if (broken.length) {
+  if (broken.length && Date.now() < deadline - 15_000) {
     const fixed = await generateReadings(broken);
     for (const { key } of broken) {
       if (fixed[key]) items[key] = { ...items[key], ...fixed[key] };
@@ -311,7 +356,7 @@ async function readingsChunk(items: { key: string; ja: string }[], strict: boole
   const system = `${ROLE}\n\n${READING_RULES}\n\n指定された JSON スキーマに従って出力してください。`;
   const list = items.map((it) => `[${it.key}]\nja: ${it.ja}`).join("\n\n");
   const user = `次の日本語の文章（ja）それぞれについて、hiragana（ひらがな版）と id（インドネシア語訳）を作成してください。
-ja の文章は変更せず、そのまま正確に読み・訳してください。${strict ? "\n特に、hiragana に漢字を1文字も残さないこと、id に日本語の文字を入れないことを厳守してください。" : ""}
+ja の文章は変更せず、そのまま正確に読み・訳してください。${strict ? "\n特に次の3点を厳守してください：hiragana に漢字を1文字も残さない／ja のひらがな・カタカナはそのまま残し、言葉を省略しない（カタカナの名前や外来語をひらがなに変えない）／id に日本語の文字を入れない。" : ""}
 
 <items>
 ${list}
@@ -321,7 +366,7 @@ ${list}
   const result: Record<string, Readings> = {};
   for (const it of items) {
     const r = out[it.key];
-    if (r) result[it.key] = { hiragana: r.hiragana.trim().replace(/ {2,}/g, " "), id: r.id.trim() };
+    if (r) result[it.key] = { hiragana: cleanReading(it.ja, r.hiragana), id: r.id.trim() };
   }
   return result;
 }
@@ -333,13 +378,15 @@ export async function generateReadings(items: { key: string; ja: string }[]): Pr
   const parts = await mapLimit(chunks, 5, (c) => readingsChunk(c, false));
   const result: Record<string, Readings> = Object.assign({}, ...parts);
 
-  const retry = items.filter((it) => !result[it.key] || hasKanji(result[it.key].hiragana) || hasJapanese(result[it.key].id));
+  const retry = items.filter(
+    (it) => !result[it.key] || !readingMatches(it.ja, result[it.key].hiragana) || hasJapanese(result[it.key].id),
+  );
   if (retry.length) {
     try {
       const again = await readingsChunk(retry, true);
       for (const it of retry) {
         const r = again[it.key];
-        if (r && (!result[it.key] || !hasKanji(r.hiragana))) result[it.key] = r;
+        if (r && (!result[it.key] || readingMatches(it.ja, r.hiragana))) result[it.key] = r;
       }
     } catch {
       // keep the first attempt; the admin can fix the remaining characters by hand

@@ -70,17 +70,41 @@ export const env = {
   baseUrl: () => read("APP_BASE_URL").replace(/\/+$/, ""),
   allowDuplicates: () => read("ALLOW_DUPLICATE_SUBMISSIONS").toLowerCase() === "true",
   hasAppSecret: () => read("APP_SECRET").length >= 16,
+  hasOpenAI: () => Boolean(read("OPENAI_API_KEY")),
 };
 
+/** True when the service account and spreadsheet ID are present (not that they work). */
+export function sheetsConfigured(): boolean {
+  if (!read("GOOGLE_SPREADSHEET_ID")) return false;
+  try {
+    getServiceAccount();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Secret used to sign admin sessions and learner links.
- * Falls back to a value derived from the service account key so the app still
- * works before APP_SECRET is configured (the setup page warns about this).
+ * Demo mode: the form shows the AI results right away (modal, audio, CSV).
+ * DEMO_MODE=true / false forces it; otherwise it is on while Google Sheets is not set up.
+ */
+export function demoMode(): boolean {
+  const v = read("DEMO_MODE").toLowerCase();
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return !sheetsConfigured();
+}
+
+/**
+ * Secret used to sign admin sessions, learner links and demo audio links.
+ * Falls back to a value derived from another configured secret so the app still
+ * works before APP_SECRET is set (the setup page warns about this).
  */
 export function appSecret(): string {
   const s = read("APP_SECRET");
   if (s) return s;
-  const seed = read("GOOGLE_PRIVATE_KEY") || read("GOOGLE_SERVICE_ACCOUNT_JSON") || read("ADMIN_PASSWORD");
+  const seed =
+    read("GOOGLE_PRIVATE_KEY") || read("GOOGLE_SERVICE_ACCOUNT_JSON") || read("ADMIN_PASSWORD") || read("OPENAI_API_KEY");
   if (!seed) throw new ConfigError("環境変数 APP_SECRET が設定されていません");
   return createHash("sha256").update(`rirekisho-fallback:${seed}`).digest("base64url");
 }
@@ -109,5 +133,6 @@ export function configStatus() {
     blobAccess: env.blobAccess(),
     baseUrl: env.baseUrl(),
     allowDuplicates: env.allowDuplicates(),
+    demo: demoMode(),
   };
 }
