@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="履歴書AIサポート / Rirekisho AI">
+  <!-- Red & white: the colours of both the Indonesian and Japanese flags -->
+  <rect width="64" height="64" rx="16" fill="#C7253E"/>
+  <!-- the résumé sheet -->
+  <path d="M24.5 13H40l10 10v26.5a4.5 4.5 0 0 1-4.5 4.5h-21a4.5 4.5 0 0 1-4.5-4.5v-32a4.5 4.5 0 0 1 4.5-4.5z" fill="#FFFFFF"/>
+  <path d="M40 13v6.5a3.5 3.5 0 0 0 3.5 3.5H50z" fill="#F2B8C1"/>
+  <!-- the rising sun / the photo on a résumé -->
+  <circle cx="35" cy="31" r="6.5" fill="#C7253E"/>
+  <path d="M27 43h16M27 48.5h9" stroke="#CFC9BF" stroke-width="3" stroke-linecap="round"/>
+  <!-- AI sparkle -->
+  <path d="M12.5 8.5c.6 3.7 1.6 4.7 5.3 5.3-3.7.6-4.7 1.6-5.3 5.3-.6-3.7-1.6-4.7-5.3-5.3 3.7-.6 4.7-1.6 5.3-5.3z" fill="#FFFFFF"/>
+</svg>

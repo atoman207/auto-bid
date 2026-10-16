@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --bg: #f7f5f1;
+  --card: #ffffff;
+  --ink: #1d2230;
+  --muted: #5d6475;
+  --faint: #8a8f9c;
+  --line: #e3dfd8;
+  --line-strong: #cfc9bf;
+  --accent: #c7253e;
+  --accent-hover: #a91d33;
+  --accent-soft: #fcebee;
+  --accent-ink: #ffffff;
+  --ok: #1d7a4c;
+  --ok-soft: #e7f5ed;
+  --warn: #9a5b00;
+  --warn-soft: #fdf3e2;
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", "Meiryo", system-ui,
+    -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Text inputs at 16px+ stop iOS Safari from zooming in on focus. */
+input,
+select,
+textarea {
+  font-size: max(16px, 1rem);
+}
+
+/* One language at a time: <html data-lang="ja|id"> is set before the first paint. */
+html:not([data-lang="ja"]) .t-ja,
+html[data-lang="ja"] .t-id {
+  display: none !important;
+}
+
+html[data-lang="ja"] .lang-tab-ja,
+html:not([data-lang="ja"]) .lang-tab-id {
+  background: var(--ink);
+  color: #ffffff;
+}
+
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.ruby-text rt {
+  font-size: 0.55em;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
